@@ -1,0 +1,414 @@
+---
+title: "NetChoose"
+author: "Aidan MacNamara, Nikolina Nakic, Ali Amin, Alex Gutteridge, Mark Hurle"
+date: "07/06/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(ggstance) #For vertical dodge
+require(cowplot)
+
+# plot theme
+theme_thesis <- function (base_size=30, angle_45=TRUE) {
+  my_theme = theme_bw(base_size=base_size) + theme(text=element_text(size=base_size, family=""), axis.title=element_text(size=rel(1)), axis.text=element_text(size=rel(0.75)), axis.title.y=element_text(vjust=0.3), axis.title.x=element_text(vjust=0.3), plot.title=element_text(size=rel(1.33), vjust=2, hjust=0.5), legend.title=element_blank(), legend.key=element_blank())
+  if (angle_45) {
+    my_theme = my_theme + theme(axis.text.x=element_text(angle=45, hjust=1))
+  }
+  return(my_theme)
+}
+```
+
+# Introduction
+
+Multiple groups have shown through empirical analysis that the selection of drug targets using genetic evidence improves the likelihood of successful demonstration of clinical efficacy. However, it is also the case that many successful drug targets are not identified by genetic evidence due to the lack of appropriate genetic instruments, pleiotropic effects, our power to detect effects, and the fact that many genes identified by genetic evidence are not suitable as drug targets due to tractability. Given this background, it is common practice to attempt to infer indirect genetic associations by the use of so called proxy genes.
+
+Proxy genes are typically used in one of two scenarios: Firstly, a genetic study (e.g. genome wide association study (GWAS)) identifies a small number of genes linked to a disease of which a large proportion are non-tractable or otherwise not suitable as drug targets. Hence, the aim of using proxy genes is to infer other potential targets that may be considered to have genetic evidence for the disease in question. Secondly, a pre-existing target hypothesis may be under consideration (e.g. the target of an existing pipeline asset that could be repositioned) and the aim of using proxy genes is to understand what diseases the existing target could be linked to through indirect genetic evidence.
+
+In either scenario the set of proxy genes is typically assembled using prior biological knowledge that comes from pre-existing databases of gene-gene or protein-protein interactions. The simplest example of such an analysis would be to take receptor-ligand pairs and, where a ligand is genetically associated to a disease, make the inference that the known cognate receptor is therefore indirectly associated to the same disease (or vice-versa). The same logic can be applied to stable complexes of proteins (heteromeric complexes for example), signalling pathways, first and second order neighbours in a protein-protein interaction network or indeed any other predefined collection of gene sets.
+
+Moving on to more sophisticated methods, network propagation can also be used to define proxy gene sets. This is where genetic association scores are mapped on to genes within a network and subsequerntly propagated through the network, typically by a modelled diffusion or random walk process, to create a new set of scores. Once this diffusion or random walk is complete, network clusters can be defined where this diffused signal is concentrated and such clusters can then be defined as proxy genes for that particular disease.
+
+## GWAS to be analysed
+
+Here is a breakdown of the GWAS we are analysing in this study (taken from UKB) as shown by the count of GWAS in each MeSH disease category.
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+gwas.data = read_csv("../gwas/my_gwas.csv")
+
+ggplot(gwas.data %>% count(disease), aes(x=n)) + 
+  geom_histogram(binwidth = 1) +
+  xlab("Number of GWAS Mapping to MeSH Term") +
+  ylab("Count of MeSH Terms") +
+  geom_text(data = gwas.data %>% count(disease) %>% filter(n > 13), aes(x=n, y = 2, label=disease), angle = 45, hjust = 0, size = 4) +
+  coord_cartesian(xlim = c(1,40)) + theme_thesis(base_size = 20)
+```
+
+## A Comparison of Successful Drug Target Enrichment across Different Proxy Definitions
+
+The figure below shows the enrichment of successful drug targets that is empirically observed when selecting targets on the basis of direct GWAS evidence and six methods of assembling proxy genes based on that GWAS evidence (hereafter described as the 'core' traits). We also show the final number of potential targets inferred by each method.
+
+The six initial methods for inferring proxies used here are:
+
+- Ligand-receptor pairs: In this algorithm if either member of a ligand-receptor pair is associated to a disease then the other member is as well.
+
+- Complex: If any member of a known stable protein complex is associated to a disease then all other members are as well.
+
+- Pathway: If any member of a known annotated signalling pathway is associated to a disease then all other members of the same pathway are as well.
+
+- Protein-protein interactors (PPI) +1: For each disease-associated gene every gene whose protein product is known to physically interact with the original gene's protein product is associated to the same disease.
+
+- Protein-protein interactors +2: The same approach as PPI +1 is taken but every protein interacting with a protein in the +1 set is also associated to the disease.
+
+- HotNet2*: Using the HotNet2 algorithm, disease-associated modules are discovered through seeding a network with genetic hits and diffusing these hit scores through the network. We used the algorithm with different prior networks to also compare network performance (MetaBase + PPI, OmniPath, STRING, Intomics InBio, HuRI).
+
+Now we will plot certain subsets of results for easier comparison using the high confidence genetic hits (HCGHs) as a reference. In each case the results for the proxy gene sets only include the proxies - the HCGHs themselves are removed:
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+load("res_plot_without_hcg_with_0s_copy.RData")
+load("method_avg_without_hcg.RData")
+
+#Subset of methods to plot for this plot
+methods_to_use = c("high_confidence_genetic",
+                   "complex",
+                   "ligand_receptor",
+                   "string_first_neighbors",
+                   "string_second_neighbors",
+                   "pathways",
+                   "pathway_first_neighbor",
+                   "pathway_second_neighbor",
+                   "random"
+                   )
+
+res_plot_cmh_basic_methods = res_plot_cmh %>% filter(method %in% methods_to_use)
+method_avg_basic_methods   = method_avg %>% filter(method %in% methods_to_use)
+res_plot_cmh_basic_methods = full_join(res_plot_cmh_basic_methods, method_avg_basic_methods)
+
+#Cleaning up labels for plotting  
+res_plot_cmh_basic_methods$method = c(
+  "All Pathway",
+  "Pathway First Or Second Neighbor",
+  "Random",
+  "Pathway First Neighbor Only",
+  "Ligand Receptor",
+  "Complex",
+  "HCGH",
+  "Network First Neighbor",
+  "Network First Or Second Neighbor"
+)
+level_order = rev(c("HCGH","Complex","Ligand Receptor","Network First Neighbor","Network First Or Second Neighbor","All Pathway","Pathway First Or Second Neighbor", "Pathway First Neighbor Only","Random"))
+
+plot_a = ggplot(res_plot_cmh_basic_methods, aes(y=factor(method, levels=level_order), x=odds)) + 
+  geom_point(size=2) + 
+  geom_errorbarh(aes(xmax=ci_high, xmin=ci_low), size=0.75, height=0.2) + 
+  theme_thesis(15) +
+  xlab("Odds Ratio") +
+  ylab("") + 
+  geom_vline(xintercept=1, alpha=0.5, linetype=2) + 
+  coord_cartesian(xlim=c(0.5, 6))
+
+plot_b = ggplot(res_plot_cmh_basic_methods, aes(x=factor(method, levels=level_order), y=Hits)) + 
+  geom_errorbar(aes(ymax=Hits+SD, ymin=2), size=0.75, width=0.2) +
+  geom_bar(stat="identity") + 
+  theme_thesis(15) +
+  scale_y_log10() +
+  coord_flip() + 
+  xlab("") + 
+  ylab("Average Number of Hits per GWAS") +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(), axis.title.x = element_text(size=rel(0.8)))
+
+plot_grid(plot_a, plot_b, align="h", rel_widths=c(1.5,1))
+```
+
+The result above suggests that first or second neighbours in a raw PPI network make poor proxies. The data above uses an aggreagated network comprising Metabase and other PPI resources (String?). Is this same result true across a range of possible gene networks including other PPI resouces?
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+load("res_plot_without_hcg_with_0s_copy.RData")
+load("method_avg_without_hcg.RData")
+
+#Subset of methods to plot for this plot
+methods_to_use = c("high_confidence_genetic",
+                   "metabase_plus_ppi_first_neighbors",
+                   "string_first_neighbors",
+                   "intomics_first_neighbors",
+                   "omnipath_first_neighbors",
+                   "huri_first_neighbors",
+                   "metabase_plus_ppi_second_neighbors",
+                   "string_second_neighbors",
+                   "intomics_second_neighbors",
+                   "omnipath_second_neighbors",
+                   "huri_second_neighbors"
+                   )
+
+res_plot_cmh_basic_methods = res_plot_cmh %>% filter(method %in% methods_to_use)
+method_avg_basic_methods   = method_avg %>% filter(method %in% methods_to_use)
+res_plot_cmh_basic_methods = full_join(res_plot_cmh_basic_methods, method_avg_basic_methods)
+
+#Cleaning up labels for plotting  
+res_plot_cmh_basic_methods$method = c(
+  "HCGH",
+  "Metabase+",
+  "OmniPath",
+  "STRING",
+  "HuRI",
+  "Intomics",
+  "STRING",
+  "HuRI",
+  "Metabase+",
+  "OmniPath",
+  "Intomics"
+)
+
+res_plot_cmh_basic_methods$Analysis = factor(c("HCGH",rep("1st Neighbor",5),rep("1st/2nd Neighbor",5)), levels = c("1st Neighbor","1st/2nd Neighbor","HCGH"))
+
+level_order = rev(c("HCGH", "STRING", "Metabase+", "Intomics", "OmniPath", "HuRI"))
+
+plot_a = ggplot(res_plot_cmh_basic_methods, aes(y=factor(method, levels=level_order), group=Analysis, color=Analysis, x=odds)) + 
+  geom_point(size=2, position = ggstance::position_dodgev(height = 0.5)) + 
+  geom_errorbarh(aes(xmax=ci_high, xmin=ci_low), size=0.75, height=0.2, position = ggstance::position_dodgev(height = 0.5)) + 
+  theme_thesis(15) +
+  xlab("Odds Ratio") +
+  ylab("") + 
+  geom_vline(xintercept=1, alpha=0.5, linetype=2) + 
+  coord_cartesian(xlim=c(0.5, 6)) +
+  guides(color = F)
+
+plot_b = ggplot(res_plot_cmh_basic_methods, aes(x=factor(method, levels=level_order), y=Hits, fill=Analysis)) + 
+  geom_errorbar(aes(ymax=Hits+SD, ymin=2), size=0.75, width=0.2, position = position_dodge(width=1)) +
+  geom_bar(stat="identity", position = "dodge") + 
+  theme_thesis(15) +
+  scale_y_log10() +
+  coord_flip() + 
+  xlab("") + 
+  ylab("Average Number of Hits per GWAS") +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(), axis.title.x = element_text(size=rel(0.8)))
+
+plot_grid(plot_a, plot_b, align="h", rel_widths=c(1.5,1))
+```
+
+A more sophisticated way to choose genes from gene networks is to apply some form of network propagation using the HCGHs as seeds. We use HotNet2 as a well documented and performant exemplar of this type of method. The results below show the enrichment of successful targets within subnetworks identified by HotNet2:
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+load("res_plot_without_hcg_with_0s_copy.RData")
+load("method_avg_without_hcg.RData")
+
+#Subset of methods to plot for this plot
+methods_to_use = c("high_confidence_genetic",
+                   "metabase_plus_ppi_first_neighbors",
+                   "string_first_neighbors",
+                   "intomics_first_neighbors",
+                   "omnipath_first_neighbors",
+                   "huri_first_neighbors",
+                   "metabase_plus_ppi_second_neighbors",
+                   "string_second_neighbors",
+                   "intomics_second_neighbors",
+                   "omnipath_second_neighbors",
+                   "huri_second_neighbors",
+                   "hotnet_omnipath",
+                   "hotnet_metabase_plus_ppi",
+                   "hotnet_huri",
+                   "hotnet_string",
+                   "hotnet_intomics"
+                   )
+
+res_plot_cmh_basic_methods = res_plot_cmh %>% filter(method %in% methods_to_use)
+method_avg_basic_methods   = method_avg %>% filter(method %in% methods_to_use)
+res_plot_cmh_basic_methods = full_join(res_plot_cmh_basic_methods, method_avg_basic_methods)
+
+#Cleaning up labels for plotting  
+res_plot_cmh_basic_methods$method = c(
+  "HuRI",
+  "STRING",
+  "OmniPath",
+  "Metabase+",
+  "Intomics",
+  "HCGH",
+  "Metabase+",
+  "OmniPath",
+  "STRING",
+  "HuRI",
+  "Intomics",
+  "STRING",
+  "HuRI",
+  "Metabase+",
+  "OmniPath",
+  "Intomics"
+)
+
+res_plot_cmh_basic_methods$Analysis = factor(c(rep("HotNet2",5),"HCGH",rep("1st Neighbor",5),rep("1st/2nd Neighbor",5)), levels = c("HotNet2","1st Neighbor","1st/2nd Neighbor","HCGH"))
+
+level_order = rev(c("HCGH","STRING","Metabase+","Intomics","OmniPath","HuRI"))
+
+plot_a = ggplot(res_plot_cmh_basic_methods, 
+                aes(y = factor(method, levels=level_order), 
+                    x = odds,
+                    group = Analysis,
+                    color=Analysis)) + 
+  geom_point(size=2, position = ggstance::position_dodgev(height = 0.5)) + 
+  geom_errorbarh(aes(xmax=ci_high, xmin=ci_low), size=0.75, height=0.2, position = ggstance::position_dodgev(height=0.5)) + 
+  theme_thesis(15) +
+  xlab("Odds Ratio") +
+  ylab("") + 
+  geom_vline(xintercept=1, alpha=0.5, linetype=2) + 
+  coord_cartesian(xlim=c(0.5, 5)) +
+guides(color=F)
+
+plot_b = ggplot(res_plot_cmh_basic_methods, aes(x=factor(method, levels=level_order), y=Hits, fill=Analysis)) + 
+  geom_errorbar(aes(ymax=Hits+SD, ymin=2), size=0.75, width=0.2, position = position_dodge(width=1)) +
+  geom_bar(stat="identity", position = "dodge") + 
+  theme_thesis(15) +
+  scale_y_log10() +
+  coord_flip() + 
+  xlab("") + 
+  ylab("Average Number of Hits per GWAS") +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(), axis.title.x = element_text(size=rel(0.8)))
+
+plot_grid(plot_a, plot_b, align="h", rel_widths=c(1.5,1))
+```
+
+HotNet2 networks built from HCGHs as seeds are enriched for additional successful drug targets (recall that the original seed genes themselves are removed from the enrichments calculated above) and contain 3-5 more candidate target genes. A similar level of enrichment can be achieved by simply taking first neighbors with an additional pathway membership filter (Pathway + First Neighbor), but this results in significatly fewer proxies identified. The precise choice of gene network used seems to have relatively little effect on the result though the intomics network has the second highest enrichment point estimate and largest number of hits (average of 90 genes per GWAS compared to 67 from String).
+
+Another option to consider is only look at targets within pathways that are themselves enriched for genetic asssociation. We use Pascal as a method to measure this effect.
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+load("res_plot_pascal_without_hcg_with_0s_copy.RData")
+load("method_avg_pascal_without_hcg.RData")
+
+#Subset of methods to plot for this plot
+methods_to_use = c("high_confidence_genetic",
+                   "coexp.genefiles.siggenes.pascal",
+                   "ppi.genefiles.siggenes.pascal",
+                   "reactome.genefiles.siggenes.pascal",
+                   "metabase.genefiles.siggenes.pascal",
+                   "coexp.genefiles.siggenes.magma",
+                   "ppi.genefiles.siggenes.magma",
+                   "reactome.genefiles.siggenes.magma",
+                   "metabase.genefiles.siggenes.magma"
+
+                   )
+
+res_plot_cmh_pascal_methods = res_plot_cmh_pascal %>% filter(method %in% methods_to_use)
+method_avg_pascal_methods   = method_avg_pascal %>% filter(method %in% methods_to_use)
+res_plot_cmh_pascal_methods = full_join(res_plot_cmh_pascal_methods, method_avg_pascal_methods)
+
+#Cleaning up labels for plotting  
+res_plot_cmh_pascal_methods$method = c(
+  "Metabase",
+  "Reactome",
+  "Metabase",
+  "Reactome",
+  "PPI Modules",
+  "Coexpression Modules",
+  "PPI Modules",
+  "Coexpression Modules",
+  "HCGH"
+)
+res_plot_cmh_pascal_methods$Analysis = factor(c("MAGMA","Pascal","Pascal","MAGMA","MAGMA","Pascal","Pascal","MAGMA","HCGH"))
+
+level_order = rev(c("HCGH","Reactome","Metabase","Coexpression Modules","PPI Modules"))
+
+plot_a = ggplot(res_plot_cmh_pascal_methods, aes(y=factor(method, levels=level_order), x=odds,
+                    group = Analysis,
+                    color=Analysis)) + 
+  geom_point(size=2, position = ggstance::position_dodgev(height = 0.5)) + 
+  geom_errorbarh(aes(xmax=ci_high, xmin=ci_low), size=0.75, height=0.2, position = ggstance::position_dodgev(height=0.5)) + 
+  theme_thesis(15) +
+  xlab("Odds Ratio") +
+  ylab("") + 
+  geom_vline(xintercept=1, alpha=0.5, linetype=2) + 
+  coord_cartesian(xlim=c(0.5, 7)) +
+  guides(color=F)
+
+plot_b = ggplot(res_plot_cmh_pascal_methods, aes(x=factor(method, levels=level_order), y=Hits, fill=Analysis)) + 
+  geom_errorbar(aes(ymax=Hits+SD, ymin=2), size=0.75, width=0.2, position = position_dodge(width=1)) +
+  geom_bar(stat="identity", position = "dodge") + 
+  theme_thesis(15) +
+  scale_y_log10() +
+  coord_flip() + 
+  xlab("") + 
+  ylab("Average Number of Hits per GWAS") +
+  theme(axis.text.y=element_blank(), axis.ticks.y=element_blank(), axis.title.x = element_text(size=rel(0.8)))
+
+plot_grid(plot_a, plot_b, align="h", rel_widths=c(1.5,1))
+```
+
+## Gene Scores: Recall and Precision
+
+Pascal (*assuming Pascal has been introduced already*) and HotNet2 both modify GWAS summary statistics to generate gene scores that represent the association between the gene and the trait of interest. In our case, HotNet2 takes the co-localisation H4 gene score (see Methods / Gene Scores), and modifies it by diffusing the score over the network of choice. In the case of Pascal, the gene score is generated by summarising the full GWAS summary statistics across the gene window (taking into account LD structure). Each method can thus produce a gene ranking per trait.
+
+We can test the performance of these gene rankings by comparing their performance in recall and precision identifying successful drug targets. The figure below compares HotNet2 and Pascal precision/recall against the co-localisation H4 scores and a randomised gene score:
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+load("hits_long_eval_filt.RData")
+
+hits_long_eval_filt %>% filter(recall != 0, precision != 0) %>% ggplot(aes(x=recall, y=precision, color=method)) + geom_path(size=1) + xlab("Recall (% of known targets recovered)") + ylab("Precision (% of predictions that are known targets)") + scale_x_log10() + scale_y_log10() + scale_color_discrete(name="Gene Score", labels=c("GWAS","Propagated GWAS","Pascal","Random")) + theme_thesis(20) + theme(axis.title.y = element_text(size=rel(0.7)))
+```
+
+```{r echo=FALSE, fig.height=6, fig.width=10}
+load("genescores.summary.RData")
+
+genescore.summary$pascal = as.data.frame(genescore.summary$pascal)
+genescore.summary$magma = as.data.frame(genescore.summary$magma)
+genescore.summary$pascal$Method = "Pascal"
+genescore.summary$magma$Method = "MAGMA"
+genescore.summary$pascal$Data = rownames(genescore.summary$pascal)
+genescore.summary$magma$Data = rownames(genescore.summary$magma)
+
+gene.scores = rbind(genescore.summary$pascal, genescore.summary$magma)
+
+#Subset of methods to plot for this plot
+methods_to_use = c("high_confidence_genetic",
+                   "complex",
+                   "ligand_receptor",
+                   "random",
+                   "network_first_neighbor",
+                   "network_second_neighbor",
+                   "pathways",
+                   "pathway_first_neighbor",
+                   "pathway_second_neighbor"
+                   )
+
+res_plot_cmh_genescore_methods = gene.scores %>% filter(Data %in% methods_to_use, Method == "Pascal")
+
+#Cleaning up labels for plotting  
+res_plot_cmh_genescore_methods$Label = c(
+  "HCGH",
+  "Complex",
+  "Ligand Receptor",
+  "Pathway First Neighbor Only",
+  "Network First Or Second Neighbor",
+  "Random",
+  "Network First Neighbor",
+  "Pathway First Or Second Neighbor",
+  "All Pathway"
+)
+
+level_order = rev(c("HCGH","Complex","Ligand Receptor","Network First Neighbor","Network First Or Second Neighbor","All Pathway","Pathway First Or Second Neighbor","Pathway First Neighbor Only", "Random"))
+
+plot_a = ggplot(res_plot_cmh_genescore_methods, aes(middle = Median, lower = `1st Qu.`, upper = `3rd Qu.`, ymin = 0, ymax = Median + 1.5 * (`3rd Qu.` - `1st Qu.`), x = factor(Label, levels = level_order))) + 
+  geom_boxplot(stat = "identity", width = 0.5) +
+  geom_hline(yintercept = filter(res_plot_cmh_genescore_methods, Label == "Random")$Median, alpha=0.5, linetype=2) +
+    theme_thesis(15) +
+  scale_y_sqrt() +
+  ylab("-log10(GeneScore)") +
+  xlab("") + 
+  coord_cartesian(xlim=c(0, 10)) +
+  coord_flip()
+plot(plot_a)
+```
+
+
+## Methods
+
+### GWAS List
+
+### Gene Scores
+
+### Fuzzy MeSH Matching
+
+### Stratified Fisher's Test of Significance
+
+### Pascal/MAGMA
+
